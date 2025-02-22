@@ -1,6 +1,4 @@
 # redis-find-big-key
-## 背景
-
 Redis 大 key 分析工具主要分为两类：
 
 **1. 离线分析**
