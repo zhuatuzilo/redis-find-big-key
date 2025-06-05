@@ -1,65 +1,51 @@
-# redis-find-big-key
-Redis 大 key 分析工具主要分为两类：
+# Redis Large Key Analysis Tool: Supports TOP N, Batch Analysis, and Slave Node Priority
 
-**1. 离线分析**
+# Background
 
-基于 RDB 文件进行解析，常用工具是 redis-rdb-tools（https://github.com/sripathikrishnan/redis-rdb-tools）。
+Redis large key analysis tools are mainly divided into two categories:
 
-不过这个工具已近 5 年未更新，不支持 Redis 7，而且由于使用 Python 开发，解析速度较慢。
+1. Offline Analysis
 
-目前较为活跃的替代工具是 https://github.com/HDT3213/rdb ，该工具支持 Redis 7，并使用 Go 开发。
+   Parsing is based on the RDB file, and the commonly used tool is redis-rdb-tools (https://github.com/sripathikrishnan/redis-rdb-tools).
+   However, this tool has not been updated for nearly 5 years, does not support Redis 7, and because it is developed using Python, the parsing speed is slow.
+   The currently more active alternative tool is https://github.com/HDT3213/rdb. This tool supports Redis 7 and is developed using Go.
 
-**2. 在线分析**
+2. Online Analysis
 
-常用工具是 redis-cli，提供两种分析方式：
+   The commonly used tool is redis-cli, which provides two analysis methods:
 
-1. --bigkeys：Redis 3.0.0 引入，统计的是 key 中元素的数量。
-2. --memkeys：Redis 6.0.0 引入，通过`MEMORY USAGE`命令统计 key 的内存占用。
+   - \- -bigkeys: Introduced in Redis 3.0.0, it counts the number of elements in the key.
+   - \- -memkeys: Introduced in Redis 6.0.0, it uses the `MEMORY USAGE` command to count the memory occupation of the key.
 
-这两种方式的优缺点如下：
+The advantages and disadvantages of these two methods are as follows:
 
-- 离线分析：基于 RDB 文件进行解析，不会对线上实例产生影响，不足的是操作相对复杂，尤其是对于很多 Redis 云服务，由于禁用了 SYNC 命令，无法直接通过 `redis-cli --rdb <filename>` 下载 RDB 文件，只能手动从控制台下载。
-- 在线分析：操作简单，只要有实例的访问权限，即可直接进行分析，不足的是分析过程中可能会对线上实例的性能产生一定影响。 
+- Offline analysis: Parsing is based on the RDB file and will not affect the performance of online instance. The disadvantage is that the operation is relatively complex. Especially for many Redis cloud services, since the SYNC command is disabled, the RDB file cannot be directly downloaded through `redis-cli --rdb <filename>`, and it can only be manually downloaded from the console.
+- Online analysis: The operation is simple. As long as there is access permission to the instance, the analysis can be directly carried out. The disadvantage is that the analysis process may have a certain impact on the performance of the online instance.
 
-本文要介绍的工具（`redis-find-big-key`）也是一个在线分析工具，其实现思路与`redis-cli --memkeys`类似，但功能更为强大实用。主要体现在：
+The tool introduced in this article (`redis-find-big-key`) is also an online analysis tool. Its implementation idea is similar to `redis-cli --memkeys`, but it is more powerful and practical. It is mainly reflected in:
 
-1. 支持 TOP N 功能
+1. Supports the TOP N function
+   This tool can output the top N keys with the most memory occupation, while redis-cli can only output the single key with the most occupation in each type.
+2. Supports batch analysis
+   This tool can analyze multiple Redis nodes at the same time. Especially for Redis Cluster, after enabling the cluster mode (`-cluster-mode`), it will automatically analyze each shard. While redis-cli can only analyze a single node.
+3. Automatically selects the slave node for analysis
+   In order to reduce the impact on the instance performance, the tool will automatically select the slave node for analysis. Only when there is no slave node will the master node be selected for analysis. While redis-cli can only analyze the master node.
 
-   该工具能够输出内存占用最多的前 N 个 key，而 redis-cli 只能输出每种类型中占用最多的单个 key。
+# Test Time Comparison
 
-2. 支持批量分析
+Test environment: Redis 6.2.17, single instance, used_memory_human is 9.75G, the number of keys is 1 millon, and the RDB file size is 3GB.
+The following is the time-consuming situation of the above four tools when obtaining the 100 keys with the most memory occupation:
 
-   该工具能够同时分析多个 Redis 节点，特别是对于 Redis Cluster，启用集群模式（`-cluster-mode`）后，会自动分析每个分片。而 redis-cli 只能针对单个节点进行分析。
+# Tool Effect
 
-3. 自动选择从节点进行分析
-
-   为了减少对实例性能的影响，工具会自动选择从节点进行分析，即使指定的是主节点的地址。只有在没有从节点时，才会选择主节点进行分析。而 redis-cli 只能分析主节点。
-
-## 测试时间对比
-
-测试环境：Redis 6.2.17，单实例，used_memory_human 为 9.75G，key 数量 100w，RDB 文件大小 3GB。
-
-以下是上述工具在获取内存占用最多的 100 个大 key 时的耗时情况：
-
-| 工具                           | 耗时      |
-| ------------------------------ | --------- |
-| redis-rdb-tools                | 25m38.68s |
-| https://github.com/HDT3213/rdb | 50.68s    |
-| redis-cli --memkeys            | 40.22s    |
-| redis-find-big-key             | 29.12s    |
-
-## 工具效果
-
-```bash
+```c++
 # ./redis-find-big-key -addr 10.0.1.76:6379 -cluster-mode
 Log file not specified, using default: /tmp/10.0.1.76:6379_20250222_043832.txt
 Scanning keys from node: 10.0.1.76:6380 (slave)
-
 Node: 10.0.1.76:6380
 -------- Summary --------
 Sampled 8 keys in the keyspace!
 Total key length in bytes is 2.96 MB (avg len 379.43 KB)
-
 Top biggest keys:
 +------------------------------+--------+-----------+---------------------+
 |             Key              |  Type  |   Size    | Number of elements  |
@@ -74,12 +60,10 @@ Top biggest keys:
 |    mykey_20250222043729:2    | string | 73 bytes  | 7 bytes (value len) |
 +------------------------------+--------+-----------+---------------------+
 Scanning keys from node: 10.0.1.202:6380 (slave)
-
 Node: 10.0.1.202:6380
 -------- Summary --------
 Sampled 8 keys in the keyspace!
 Total key length in bytes is 3.11 MB (avg len 398.23 KB)
-
 Top biggest keys:
 +------------------------------+--------+------------+---------------------+
 |             Key              |  Type  |    Size    | Number of elements  |
@@ -94,12 +78,10 @@ Top biggest keys:
 |    mykey_20250222043741:1    | string |  73 bytes  | 7 bytes (value len) |
 +------------------------------+--------+------------+---------------------+
 Scanning keys from node: 10.0.1.147:6380 (slave)
-
 Node: 10.0.1.147:6380
 -------- Summary --------
 Sampled 4 keys in the keyspace!
 Total key length in bytes is 192.9 KB (avg len 48.22 KB)
-
 Top biggest keys:
 +-------------------------+--------+-----------+---------------------+
 |           Key           |  Type  |   Size    | Number of elements  |
@@ -111,22 +93,21 @@ Top biggest keys:
 +-------------------------+--------+-----------+---------------------+
 ```
 
-## 工具地址
+# Tool Address
 
-项目地址：https://github.com/slowtech/redis-find-big-key
+Project address: https://github.com/slowtech/redis-find-big-key
+You can directly download the binary package or compile the source code.
 
-可直接下载二进制包，也可进行源码编译。
-
-### 直接下载二进制包
+## Directly Download the Binary Package
 
 ```bash
 # wget https://github.com/slowtech/redis-find-big-key/releases/download/v1.0.0/redis-find-big-key-linux-amd64.tar.gz
-# tar xvf redis-find-big-key-linux-amd64.tar.gz 
+# tar xvf redis-find-big-key-linux-amd64.tar.gz
 ```
 
-解压后，会在当前目录生成一个名为`redis-find-big-key`的可执行文件。
+After decompression, an executable file named `redis-find-big-key` will be generated in the current directory.
 
-### 源码编译
+## Build from Source Code
 
 ```bash
 # wget https://github.com/slowtech/redis-find-big-key/archive/refs/tags/v1.0.0.tar.gz
@@ -135,9 +116,9 @@ Top biggest keys:
 # go build
 ```
 
-编译完成后，会在当前目录生成一个名为`redis-find-big-key`的可执行文件。
+After compilation, an executable file named `redis-find-big-key` will be generated in the current directory.
 
-## 参数解析
+# Parameter Parsing
 
 ```bash
 # ./redis-find-big-key --help
@@ -168,139 +149,129 @@ Usage of ./redis-find-big-key:
         Maximum number of biggest keys to display (default 100)
 ```
 
-各个参数的具体含义如下：
+The specific meanings of each parameter are as follows:
 
-- -addr：指定 Redis 实例的地址，格式为`<hostname>:<port>`，例如 10.0.0.108:6379。注意，
+- -addr: Specify the address of the Redis instance in the format of `<hostname>:<port>`, for example, 10.0.0.108:6379. Note, If the cluster mode (`-cluster-mode`) is not enabled, multiple addresses can be specified, separated by commas, for example, 10.0.0.108:6379,10.0.0.108:6380. If the cluster mode is enabled, only one address can be specified, and the tool will automatically discover other nodes in the cluster.
 
-  - 如果不启用集群模式（-cluster-mode），可以指定多个地址，地址之间用逗号分隔，例如 10.0.0.108:6379,10.0.0.108:6380。
-  - 如果启用集群模式，只能指定一个地址，工具会自动发现集群中的其它节点。
+- -cluster-mode: Enable the cluster mode. The tool will automatically analyze each shard in the Redis Cluster and preferentially select the slave node. Only when there is no slave node in the corresponding shard will the master node be selected for analysis.
 
-- -cluster-mode：开启集群模式。工具会自动分析 Redis Cluster 中的每个分片，并优先选择从节点，只有在对应分片没有从节点时，才会选择主节点进行分析。
+- -concurrency: Set the concurrency, with a default value of 1, that is, analyze the nodes one by one. If there are many nodes to be analyzed, increasing the concurrency can improve the analysis speed.
 
-- -concurrency：设置并发度，默认值为 1，即逐个节点进行分析。如果要分析的节点比较多，可以增加并发度来提升分析速度。
+- -direct: Directly perform the analysis on the node specified by -addr, which will skip the default logic of automatically selecting the slave node.
 
-- -direct：在 -addr 指定的节点上直接进行分析，这样会跳过自动选择从节点这个默认逻辑。
+- -log-file: Specify the path of the log file, which is used to record the progress information and intermediate process information during the analysis process. If not specified, the default is `/tmp/<firstNode>_<timestamp>.txt`, for example, /tmp/10.0.0.108:6379_20250218_125955.txt.
 
-- -log-file：指定日志文件路径，用于记录分析过程中的进度信息和中间过程信息。不指定则默认是`/tmp/<firstNode>_<timestamp>.txt`，例如 /tmp/10.0.0.108:6379_20250218_125955.txt。
+- -master-yes: If there is a master node among the nodes to be analyzed (common reasons: the slave node does not exist; specify to analyze on the master node through the -direct parameter), the tool will prompt the following error: 
 
-- -master-yes：如果待分析的节点中存在主节点（常见原因：从节点不存在；通过 -direct 参数指定要在主节点上分析），工具会提示以下错误：
+  ```
+  Error: nodes 10.0.1.76:6379 are master. To execute, you must specify -master-yes
+  ```
 
-  > Error: nodes 10.0.1.76:6379 are master. To execute, you must specify --master-yes
+  If it is determined that the analysis can be carried out on the master node, you can specify -master-yes to skip the detection.
 
-  如果确定可以在主节点上进行分析，可指定 -master-yes 跳过检测。
+- -password: Specify the password of the Redis instance.
 
-- -password：指定 Redis 实例的密码。
+- -samples: Set the sampling number in the `MEMORY USAGE key [SAMPLES count]` command. For data structures with multiple elements (such as LIST, SET, ZSET, HASH, STREAM, etc.), a too low sampling number may lead to inaccurate estimation of memory occupation, while a too high number will increase the calculation time and resource consumption. If SAMPLES is not specified, the default value is 5.
 
-- -samples：设置`MEMORY USAGE key [SAMPLES count]`命令中的采样数量。对于包含多个元素的数据结构（如 LIST、SET、ZSET、HASH、STREAM 等），采样数量过低可能导致内存占用估算不准确，而过高则会增加计算时间和资源消耗。SAMPLES 不指定的话，默认为 5。
+- -skip-lazyfree-check: If the analysis is carried out on the master node, special attention should be paid to the large expired keys. Because the scanning operation will trigger the deletion of expired keys. If lazy deletion (`lazyfree-lazy-expire`) is not enabled, the deletion operation will be executed in the main thread. At this time, deleting large keys may cause blocking and affect normal business requests.
+  Therefore, when the tool analyzes on the master node, it will automatically check whether the node has enabled lazy deletion. If it is not enabled, the tool will prompt the following error and terminate the operation to avoid affecting the online business: 
 
-- -skip-lazyfree-check：如果是在主节点上进行分析，需要特别注意过期大 key。因为扫描操作会触发过期 key 的删除，如果未开启惰性删除（`lazyfree-lazy-expire`），删除操作将在主线程中执行，删除大 key 时可能会导致阻塞，从而影响正常的业务请求。
+  ```bash
+  Error: nodes 10.0.1.76:6379 are master and lazyfree-lazy-expire is set to ‘no’. Scanning might trigger large key expiration, which could block the main thread. Please set lazyfree-lazy-expire to ‘yes’ for better performance. To skip this check, you must specify --skip-lazyfree-check
+  ```
 
-  因此，当工具在主节点上进行分析时，会自动检查节点是否启用了惰性删除。如果未启用，工具将提示以下错误并终止操作，以避免对线上业务造成影响：
+  In this case, it is recommended to enable lazy deletion by the command `CONFIG SET lazyfree-lazy-expire yes`*.*
+  If it is confirmed that there are no large expired keys, you can specify -skip-lazyfree-check to skip the detection.
 
-  > Error: nodes 10.0.1.76:6379 are master and lazyfree-lazy-expire is set to 'no'. Scanning might trigger large key expiration, which could block the main thread. Please set lazyfree-lazy-expire to 'yes' for better performance. To skip this check, you must specify --skip-lazyfree-check
+- -sleep: Set the sleep time after scanning each batch of data.
 
-  在这种情况下，建议通过`CONFIG SET lazyfree-lazy-expire yes`命令开启惰性删除。
+- -tls: Enable the TLS connection.
 
-  如果确认没有过期大 key，想跳过检测，可指定 -skip-lazyfree-check。
+- -top: Display the top N keys with the most memory occupation. The default is 100.
 
-- -sleep：设置每扫描完一批数据后的休眠时间。
+# Common Usage
 
-- -tls：启用 TLS 连接。
-
-- -top:  显示占用内存最多的 N 个 key。默认是 100。
-
-
-
-## 常见用法
-
-### 分析单个节点
+## Analyze a Single Node
 
 ```bash
 ./redis-find-big-key -addr 10.0.1.76:6379
 Scanning keys from node: 10.0.1.202:6380 (slave)
 ```
 
-注意，在上面的示例中，指定的节点和实际扫描的节点并不相同。这是因为 10.0.1.76:6379 是主节点，而该工具默认会选择从库进行分析。只有当指定的主节点没有从库时，工具才会直接扫描该主节点。
+Note that in the above example, the specified node is not the same as the actually scanned node. This is because 10.0.1.76:6379 is the master node, and the tool will default to selecting the slave library for analysis. Only when there is no slave library for the specified master node will the tool directly scan the master node.
 
-
-
-### 分析单个 Redis 集群
+## Analyze a Single Redis Cluster
 
 ```bash
 ./redis-find-big-key -addr 10.0.1.76:6379 -cluster-mode
 ```
 
-只需提供集群中任意一个节点的地址，工具会自动获取集群中其它节点的地址。同时，工具会优先选择从节点进行分析，只有在某个分片没有从节点时，才会选择该分片的主节点进行分析。
+Just provide the address of any node in the cluster, and the tool will automatically obtain the addresses of other nodes in the cluster. At the same time, the tool will preferentially select the slave node for analysis. Only when there is no slave node in a certain shard will the master node of that shard be selected for analysis.
 
-
-
-### 分析多个节点
+## Analyze Multiple Nodes
 
 ```bash
 ./redis-find-big-key -addr 10.0.1.76:6379,10.0.1.202:6379,10.0.1.147:6379
 ```
 
-节点之间是相互独立的，可以来自同一个集群，也可以来自不同的集群。注意，如果 -addr 参数指定了多个节点地址，则不能再使用 -cluster-mode 参数。
+The nodes are independent of each other and can come from the same cluster or different clusters. Note that if multiple node addresses are specified in the -addr parameter, the -cluster-mode parameter cannot be used.
 
+## Analyze the Master Node
 
-
-### 对主节点进行分析
-
-如果需要对主节点进行分析，可指定主节点并使用`-direct`参数。
+If you need to analyze the master node, you can specify the master node and use the `-direct` parameter.
 
 ```bash
 ./redis-find-big-key -addr 10.0.1.76:6379 -direct -master-yes
 ```
 
+# Notes
 
+1. This tool is only applicable to Redis version 4.0 and above, because `MEMORY USAGE` and `lazyfree-lazy-expire` are supported starting from Redis 4.0.
 
-## 注意事项
+2. The size of the same key displayed by `redis-find-big-key` and `redis-cli` may differ. This is normal because `redis-find-big-key` defaults to analyzing slave nodes, showing the key size in the slave, while `redis-cli` can only analyze the master node, displaying the key size in the master. Consider the following example:
 
-1.该工具仅适用于 Redis 4.0 及以上版本，因为`MEMORY USAGE`和`lazyfree-lazy-expire`是从 Redis 4.0 开始支持的。
+   ```bash
+   # ./redis-find-big-key -addr 10.0.1.76:6379 -top 1
+   Scanning keys from node: 10.0.1.202:6380 (slave)
+   ...
+   Top biggest keys:
+   +------------------------------+------+------------+--------------------+
+   |             Key              | Type |    Size    | Number of elements |
+   +------------------------------+------+------------+--------------------+
+   | mysortedset_20250222043741:2 | zset | 1020.13 KB |    9490 members    |
+   +------------------------------+------+------------+--------------------+
+   
+   # redis-cli -h 10.0.1.76 -p 6379 -c MEMORY USAGE mysortedset_20250222043741:2
+   (integer) 1014242
+   # echo "scale=2; 1014242 / 1024" | bc
+   990.47
+   ```
 
-2.同一个 key 在 redis-find-big-key 和 redis-cli 中显示的大小可能不一致，这是正常现象。原因在于，redis-find-big-key 默认选择从库进行分析，因此通常显示的是从库中的 key 大小，而  redis-cli 只能对主库进行分析，显示的是主库中的 key 大小。看下面这个示例。
+   One shows 1020.13 KB, and the other 990.47 KB.
 
-```bash
-# ./redis-find-big-key -addr 10.0.1.76:6379 -top 1
-Scanning keys from node: 10.0.1.202:6380 (slave)
-...
-Top biggest keys:
-+------------------------------+------+------------+--------------------+
-|             Key              | Type |    Size    | Number of elements |
-+------------------------------+------+------------+--------------------+
-| mysortedset_20250222043741:2 | zset | 1020.13 KB |    9490 members    |
-+------------------------------+------+------------+--------------------+
+   If you directly check the key size in the master using `redis-find-big-key`, the result will match `redis-cli`:
 
-# redis-cli -h 10.0.1.76 -p 6379 -c MEMORY USAGE mysortedset_20250222043741:2
-(integer) 1014242
+   ```bash
+   # ./redis-find-big-key -addr 10.0.1.76:6379 -direct --master-yes -top 1 --skip-lazyfree-check
+   Scanning keys from node: 10.0.1.76:6379 (master)
+   ...
+   Top biggest keys:
+   +------------------------------+------+-----------+--------------------+
+   |             Key              | Type |   Size    | Number of elements |
+   +------------------------------+------+-----------+--------------------+
+   | mysortedset_20250222043741:2 | zset | 990.47 KB |    9490 members    |
+   +------------------------------+------+-----------+--------------------+
+   ```
 
-# echo "scale=2; 1014242 / 1024" | bc
-990.47
-```
+   
 
-一个是 1020.13 KB，一个是 990.47 KB。
+# Implementation Principle
 
-如果直接通过 redis-find-big-key 查看主库中该 key 的大小，结果与 redis-cli 完全一致：
+This tool is implemented by referring to `redis-cli --memkeys`.
 
-```bash
-# ./redis-find-big-key -addr 10.0.1.76:6379 -direct --master-yes -top 1 --skip-lazyfree-check
-Scanning keys from node: 10.0.1.76:6379 (master)
-...
-Top biggest keys:
-+------------------------------+------+-----------+--------------------+
-|             Key              | Type |   Size    | Number of elements |
-+------------------------------+------+-----------+--------------------+
-| mysortedset_20250222043741:2 | zset | 990.47 KB |    9490 members    |
-+------------------------------+------+-----------+--------------------+
-```
+In fact, both `redis-cli --bigkeys` and `redis-cli --memkeys` call the `findBigKeys` function with different parameters:
 
-## 实现原理
-
-该工具是参考`redis-cli --memkeys`实现的。
-
-实际上，无论是`redis-cli --bigkeys`还是`redis-cli --memkeys`，调用的都是`findBigKeys`函数，只不过传入的参数不一样。
-
-```c
+```c++
 /* Find big keys */
 if (config.bigkeys) {
     if (cliConnect(0) == REDIS_ERR) exit(1);
@@ -314,12 +285,12 @@ if (config.memkeys) {
 }
 ```
 
-接下来，我们看一下这个函数的具体实现逻辑。
+Next, let’s look at the specific implementation logic of this function:
 
-```c
+```c++
 static void findBigKeys(int memkeys, unsigned memkeys_samples) {
     ...
-    // 通过 DBSIZE 命令获取 key 的总数量
+    // Get the total number of keys via the DBSIZE command
     total_keys = getDbSize();
 
     /* Status message */
@@ -332,29 +303,29 @@ static void findBigKeys(int memkeys, unsigned memkeys_samples) {
         /* Calculate approximate percentage completion */
         pct = 100 * (double)sampled/total_keys;
       
-        // 通过 SCAN 命令扫描 key
+        // Scan keys via the SCAN command
         reply = sendScan(&it);
         scan_loops++;
-        // 获取当前批次的 key 名称。
+        // Get the key names of the current batch
         keys  = reply->element[1];
         ...
-        // 使用 pipeline 技术批量发送 TYPE 命令，获取每个 key 的类型
+        // Use pipeline to batch send TYPE commands to get the type of each key
         getKeyTypes(types_dict, keys, types);
-        // 使用 pipeline 技术批量发送相应命令获取每个 key 的大小
+        // Use pipeline to batch send corresponding commands to get the size of each key
         getKeySizes(keys, types, sizes, memkeys, memkeys_samples);
 
-        // 逐个处理 key，更新统计信息
+        // Process each key and update statistics
         for(i=0;i<keys->elements;i++) {
             typeinfo *type = types[i];
             /* Skip keys that disappeared between SCAN and TYPE */
             if(!type)
                 continue;
 
-            type->totalsize += sizes[i]; // 累计每个类型 key 的总大小
-            type->count++; // 累计每个类型 key 的数量
-            totlen += keys->element[i]->len; // 累计 key 的长度
-            sampled++; // 累计扫描的 key 的数量
-            // 如果当前 key 的大小超过该类型的最大值，则会更新该类型的最大键大小，并打印统计信息。
+            type->totalsize += sizes[i]; // Accumulate the total size of keys of this type
+            type->count++; // Count the number of keys of this type
+            totlen += keys->element[i]->len; // Accumulate the key length
+            sampled++; // Count the number of scanned keys
+            // If the current key size exceeds the maximum of this type, update the maximum key size and print statistics
             if(type->biggest<sizes[i]) {
                 if (type->biggest_key)
                     sdsfree(type->biggest_key);
@@ -368,13 +339,13 @@ static void findBigKeys(int memkeys, unsigned memkeys_samples) {
                 type->biggest = sizes[i];
             }
 
-            // 每扫描 100 万个 key，还会输出当前进度和扫描的 key 数量。
+            // Every 1 million keys scanned, output the current progress and the number of scanned keys
             if(sampled % 1000000 == 0) {
                 printf("[%05.2f%%] Sampled %llu keys so far\n", pct, sampled);
             }
         }
 
-        // 如果设置了 interval，则每执行 100 次 SCAN 命令，都会 sleep 一段时间。
+        // If interval is set, sleep for a while every 100 SCAN commands
         if (config.interval && (scan_loops % 100) == 0) {
             usleep(config.interval);
         }
@@ -382,24 +353,25 @@ static void findBigKeys(int memkeys, unsigned memkeys_samples) {
         freeReplyObject(reply);
     } while(force_cancel_loop == 0 && it != 0);
     .. 
-    // 输出总的统计信息
+    // Output overall statistics
     printf("\n-------- summary -------\n\n");
-    if (force_cancel_loop) printf("[%05.2f%%] ", pct); // 如果循环被取消，则显示进度百分比
-    printf("Sampled %llu keys in the keyspace!\n", sampled); // 打印已经扫描的 key 的数量
+    if (force_cancel_loop) printf("[%05.2f%%] ", pct); // Show progress percentage if the loop was cancelled
+    printf("Sampled %llu keys in the keyspace!\n", sampled); // Print the number of scanned keys
     printf("Total key length in bytes is %llu (avg len %.2f)\n\n",
-       totlen, totlen ? (double)totlen/sampled : 0); // 打印 key 名的总长度及平均长度
+       totlen, totlen ? (double)totlen/sampled : 0); // Print the total and average key name length
 
-    // 输出每种类型最大键的信息
+    // Output information about the largest key of each type
     di = dictGetIterator(types_dict);
     while ((de = dictNext(di))) {
         typeinfo *type = dictGetVal(de);
         if(type->biggest_key) {
             printf("Biggest %6s found '%s' has %llu %s\n", type->name, type->biggest_key,
                type->biggest, !memkeys? type->sizeunit: "bytes");
-        } // type->name 是 key 的类型名称，type->biggest_key 是最大键的名称
-    } // type->biggest 是最大键的大小，!memkeys? type->sizeunit: "bytes" 是大小单位。
+        } // type->name is the key type, type->biggest_key is the largest key name
+    } // type->biggest is the size of the largest key, !memkeys? type->sizeunit: "bytes" is the size unit
+
     ..
-    // 输出每种类型的统计信息
+    // Output statistics for each type
     di = dictGetIterator(types_dict);
     while ((de = dictNext(di))) {
         typeinfo *type = dictGetVal(de);
@@ -407,20 +379,17 @@ static void findBigKeys(int memkeys, unsigned memkeys_samples) {
            type->count, type->name, type->totalsize, !memkeys? type->sizeunit: "bytes",
            sampled ? 100 * (double)type->count/sampled : 0,
            type->count ? (double)type->totalsize/type->count : 0);
-    } // sampled ? 100 * (double)type->count/sampled : 0 是当前类型的 key 的数量在总扫描的 key 数量中的百分比。
+    } // sampled ? 100 * (double)type->count/sampled : 0 is the percentage of keys of this type among all scanned keys
     ..
     exit(0);
 }
 ```
 
-该函数的实现逻辑如下：
+The implementation logic of this function is as follows:
 
-1. 使用 DBSIZE 命令获取 Redis 数据库中的 key 总数。
-2. 使用 SCAN 命令批量扫描 key，并获取当前批次的 key 名称。
-3. 使用 pipeline 技术批量发送 TYPE 命令，获取每个 key 的类型。
-4. 使用 pipeline 技术批量发送相应命令获取每个 key 的大小：
-   - 若指定了 --bigkeys，根据 key 类型使用对应命令获取大小：STRLEN（string 类型）、LLEN（list 类型）、SCARD（set 类型）、HLEN（hash 类型）、ZCARD（zset 类型）、XLEN（stream 类型）。
-   - 若指定了 --memkeys，使用 MEMORY USAGE 命令获取 key 的内存占用。
-5. 逐个处理 key，更新统计信息：若某个 key 的大小超过该类型的最大值，则更新最大值并打印相关统计信息。
-
-6. 输出总结信息，展示每种 key 类型的最大 key 及其相关统计数据。
+1. Use the DBSIZE command to get the total number of keys in the Redis database.
+2. Use the SCAN command to batch scan keys and get the key names of the current batch.
+3. Use pipeline to batch send TYPE commands to get the type of each key.
+4. Use pipeline to batch send corresponding commands to get the size of each key: If `--bigkeys` is specified, use corresponding commands based on key type: STRLEN (string), LLEN (list), SCARD (set), HLEN (hash), ZCARD (zset), XLEN (stream). If `--memkeys` is specified, use the MEMORY USAGE command to get the memory usage of the key.
+5. Process each key and update statistics: If a key’s size exceeds the maximum of its type, update the maximum and print relevant statistics.
+6. Output summary information showing the largest key of each type and related statistics.
