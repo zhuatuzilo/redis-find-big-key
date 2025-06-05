@@ -38,6 +38,16 @@ The tool introduced in this article (`redis-find-big-key`) is also an online ana
 Test environment: Redis 6.2.17, single instance, used_memory_human is 9.75G, the number of keys is 1 millon, and the RDB file size is 3GB.
 The following is the time-consuming situation of the above four tools when obtaining the 100 keys with the most memory occupation:
 
+
+| Tool                           | Time-consuming      |
+| ------------------------------ | --------- |
+| redis-rdb-tools                | 25m38.68s |
+| https://github.com/HDT3213/rdb | 50.68s    |
+| redis-cli --memkeys            | 40.22s    |
+| redis-find-big-key             | 29.12s    |
+
+# 
+
 # Tool Effect
 
 ```c++
