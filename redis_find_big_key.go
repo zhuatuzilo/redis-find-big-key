@@ -586,7 +586,12 @@ func findBigKeys(addr string) error {
 			if err != nil {
 				return fmt.Errorf("failed to connect to master node %s: %v", nodeAddr, err)
 			}
-
+			
+			if *skipLazyfreeCheck {
+		                log.Printf("Skipping lazyfree-lazy-expire check for node %s", nodeAddr)
+		                continue
+	                }
+			
 			lazyfreeConfig, err := rdb.ConfigGet(ctx, "lazyfree-lazy-expire").Result()
 			if err != nil {
 				return fmt.Errorf("failed to get lazyfree-lazy-expire config for master node %s: %v", nodeAddr, err)
